@@ -65,7 +65,7 @@ def parse_arguments():
     parser.add_argument(
         "--weights",
         type=str,
-        default=r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models\best.onnx",
+        default=r"C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx",
         help="Path to single quantized YOLO weights (.onnx)",
     )
     parser.add_argument(
@@ -143,6 +143,48 @@ def parse_arguments():
 
 def _resolve_repo_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _onnx_runtime_cuda_usable(weights_path: str) -> bool:
+    """Return True only when ORT can actually run the model on CUDA (not just list the EP)."""
+    try:
+        import onnxruntime as ort
+
+        if "CUDAExecutionProvider" not in ort.get_available_providers():
+            return False
+        if not os.path.isfile(weights_path):
+            return False
+        session = ort.InferenceSession(
+            weights_path,
+            providers=[("CUDAExecutionProvider", {"device_id": 0})],
+        )
+        return session.get_providers()[0] == "CUDAExecutionProvider"
+    except Exception:
+        return False
+
+
+def _resolve_inference_device(weights_path: str) -> str | int:
+    """Pick an inference device that matches the runtime backend for the weights file."""
+    weights_lower = (weights_path or "").lower()
+
+    if weights_lower.endswith(".onnx"):
+        # Ultralytics enables CUDA IO binding when device=0. If ORT cannot init CUDA
+        # (driver/CUDA mismatch) it silently falls back to CPU while tensors stay on
+        # GPU, causing per-frame "no data transfer registered" errors.
+        if _onnx_runtime_cuda_usable(weights_path):
+            return 0
+        print("[SYSTEM] ONNX inference will use CPU (ORT CUDA unavailable or misconfigured).")
+        return "cpu"
+
+    try:
+        import torch
+
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            torch.zeros(1, device="cuda")
+            return 0
+    except Exception:
+        pass
+    return "cpu"
 
 
 def _ensure_parent_dir(path: str) -> None:
@@ -598,13 +640,7 @@ def main():
             source.close()
         raise
 
-    device_context = "cpu"
-    try:
-        import torch
-        if torch.cuda.is_available():
-            device_context = 0
-    except Exception:
-        device_context = "cpu"
+    device_context = _resolve_inference_device(args.weights)
 
     print(f"[SYSTEM] Quantized model loaded — device: {device_context}")
     print(f"  • {args.weights}")

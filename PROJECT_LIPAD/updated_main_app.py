@@ -30,7 +30,7 @@ ctk.set_default_color_theme("green")
 class LipadQuantizedApp(ctk.CTk):
     def __init__(
         self,
-        weights_path: str = r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models\best.onnx", # Updated default
+        weights_path: str = r"C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx", # Updated default
         dist_ref: float = 1168.4,
     ):
         super().__init__()
@@ -191,7 +191,7 @@ class LipadQuantizedApp(ctk.CTk):
         return r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models"
 
     def _default_quantized_weights(self) -> str:
-        return r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models\best.onnx"
+        return r"C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx"
 
     def _set_status(self, text: str) -> None:
         self.last_run_status.set(text)
@@ -883,6 +883,6 @@ class LipadQuantizedApp(ctk.CTk):
 
 
 if __name__ == "__main__":
-    weights_path = r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models\best.onnx"
+    weights_path = r"C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx"
     app = LipadQuantizedApp(weights_path=weights_path)
     app.mainloop()

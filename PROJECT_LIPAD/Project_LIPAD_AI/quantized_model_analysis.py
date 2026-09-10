@@ -2,7 +2,7 @@
 from ultralytics import YOLO
 
 PT_WEIGHTS = r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models\best.pt"
-ONNX_WEIGHTS = r"C:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\models\best.onnx"
+ONNX_WEIGHTS = r"C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx"
 
 
 def run_eval(weights: str, label: str, task: str | None = None):
