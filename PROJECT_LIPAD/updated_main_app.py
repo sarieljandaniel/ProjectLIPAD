@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -11,7 +13,7 @@ import time
 import customtkinter as ctk
 import pandas as pd
 from PIL import Image
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 from ui.components import body_label, newsprint_button
 from ui.pages.analysis import render_analysis
@@ -63,12 +65,16 @@ class LipadQuantizedApp(ctk.CTk):
         self.current_lidar_distance = dist_ref
         self._telemetry_packets: list[TelemetryPacket] = []
 
-        self.live_pc_ip = ctk.StringVar(value="192.168.1.47")
+        self.live_pc_ip = ctk.StringVar(value=self._detect_local_ipv4())
         self.live_listen_host = ctk.StringVar(value="0.0.0.0")
         self.live_listen_port = ctk.StringVar(value="5000")
+        self.live_protocol = ctk.StringVar(value="tcp")
         self.live_width = ctk.StringVar(value="1280")
         self.live_height = ctk.StringVar(value="720")
         self.live_bitrate = ctk.StringVar(value="3000000")
+        self.live_firewall_status = ctk.StringVar(
+            value="Not configured — allow the selected live-stream port before connecting the Pi."
+        )
         self.pi_ssh_host = ctk.StringVar(value="lipad.local")
         self.pi_ssh_user = ctk.StringVar(value="lipad")
         self.pi_ssh_password = ctk.StringVar(value="109791")
@@ -174,6 +180,20 @@ class LipadQuantizedApp(ctk.CTk):
 
     def _repo_root(self) -> str:
         return os.path.abspath(os.path.dirname(__file__))
+
+    @staticmethod
+    def _detect_local_ipv4() -> str:
+        """Return the IPv4 address chosen by Windows for normal LAN traffic."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                # UDP connect selects an interface locally without transmitting a packet.
+                probe.connect(("192.0.2.1", 1))
+                address = probe.getsockname()[0]
+                if address and not address.startswith("127."):
+                    return address
+        except OSError:
+            pass
+        return "192.168.1.47"
 
     def _data_dir(self) -> str:
         return os.path.join(self._repo_root(), "data")
@@ -358,7 +378,10 @@ class LipadQuantizedApp(ctk.CTk):
     def _live_preview_path(self) -> str:
         return os.path.join(self._data_dir(), "live_preview.jpg")
 
-    def _parse_live_settings(self) -> tuple[str, str, int, int, int, int]:
+    def _live_raw_preview_path(self) -> str:
+        return os.path.join(self._data_dir(), "live_raw_preview.jpg")
+
+    def _parse_live_settings(self) -> tuple[str, str, int, int, int, int, str]:
         host = (self.live_listen_host.get() or "0.0.0.0").strip()
         pc_ip = (self.live_pc_ip.get() or "192.168.1.47").strip()
         try:
@@ -377,17 +400,90 @@ class LipadQuantizedApp(ctk.CTk):
             bitrate = int(float(self.live_bitrate.get()))
         except Exception:
             bitrate = 3_000_000
-        return host, pc_ip, port, width, height, bitrate
+        protocol = (self.live_protocol.get() or "tcp").strip().lower()
+        if protocol not in {"tcp", "udp"}:
+            protocol = "tcp"
+        return host, pc_ip, port, width, height, bitrate, protocol
 
     def rpicam_command_text(self) -> str:
-        _host, pc_ip, port, width, height, bitrate = self._parse_live_settings()
+        _host, pc_ip, port, width, height, bitrate, protocol = self._parse_live_settings()
         return (
             "rpicam-vid -t 0 "
             f"--width {width} --height {height} "
             f"--bitrate {bitrate} --inline "
             "--codec libav --libav-format mpegts "
-            f"-o tcp://{pc_ip}:{port}"
+            f"-o {protocol}://{pc_ip}:{port}"
         )
+
+    @staticmethod
+    def _live_firewall_rule_name(protocol: str, port: int) -> str:
+        return f"Project LiPAD live stream ({protocol.upper()} {port})"
+
+    def request_live_firewall_access(self) -> None:
+        """Ask for consent, then add a scoped inbound Windows Firewall rule via UAC."""
+        _host, _pc_ip, port, _width, _height, _bitrate, protocol = self._parse_live_settings()
+        if not 1 <= port <= 65535:
+            self.live_firewall_status.set("Invalid live-stream port. Enter a value from 1 to 65535.")
+            return
+        if os.name != "nt":
+            self.live_firewall_status.set("Firewall setup is available only on Windows.")
+            return
+
+        rule_name = self._live_firewall_rule_name(protocol, port)
+        permitted = messagebox.askyesno(
+            "Allow live-stream port",
+            "Project LiPAD needs an inbound Windows Firewall rule so the Raspberry Pi can "
+            f"send its camera feed to this PC on {protocol.upper()} port {port}.\n\n"
+            "Selecting Yes opens the Windows administrator permission prompt. The rule is "
+            "limited to this port, but includes Public networks so it works on the current Wi-Fi connection.",
+            icon="question",
+            parent=self,
+        )
+        if not permitted:
+            self.live_firewall_status.set("Firewall permission was not granted.")
+            return
+
+        self.live_firewall_status.set(
+            f"Requesting administrator permission for {protocol.upper()} port {port}…"
+        )
+
+        def _add_rule() -> None:
+            script = (
+                "$ErrorActionPreference = 'Stop'; "
+                f"$name = '{rule_name}'; "
+                "Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | "
+                "Remove-NetFirewallRule; "
+                f"New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow "
+                f"-Protocol {protocol.upper()} -LocalPort {port} -Profile Domain,Private,Public | Out-Null"
+            )
+            encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+            launcher = (
+                "$process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru "
+                "-ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', "
+                f"'-EncodedCommand', '{encoded}'); exit $process.ExitCode"
+            )
+            try:
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", launcher],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                if result.returncode == 0:
+                    message = (
+                        f"Firewall access enabled for {protocol.upper()} port {port} "
+                        "on Domain, Private, and Public networks."
+                    )
+                else:
+                    message = (
+                        "Firewall permission was declined or the rule could not be created. "
+                        "Allow it manually, then try again."
+                    )
+            except (OSError, subprocess.TimeoutExpired):
+                message = "Could not request firewall permission. Allow the port manually, then try again."
+            self.after(0, lambda: self.live_firewall_status.set(message))
+
+        threading.Thread(target=_add_rule, daemon=True, name="live-firewall-rule").start()
 
     def _refresh_rpicam_command_box(self) -> None:
         if not hasattr(self, "rpicam_cmd_box") or not self.rpicam_cmd_box.winfo_exists():
@@ -448,10 +544,9 @@ class LipadQuantizedApp(ctk.CTk):
         except Exception as e:
             self._set_status(f"Clipboard copy failed: {e}")
 
-    def _apply_preview_image(self, lbl) -> None:
+    def _apply_preview_image(self, lbl, path: str) -> None:
         if lbl is None or not lbl.winfo_exists():
             return
-        path = self._live_preview_path()
         try:
             mtime = os.path.getmtime(path)
         except OSError:
@@ -459,7 +554,7 @@ class LipadQuantizedApp(ctk.CTk):
                 return
             lbl.configure(image="", text=self.last_run_status.get() or "Waiting for first live frame…")
             return
-        if mtime == self._live_preview_mtime and getattr(lbl, "_lipad_mtime", None) == mtime:
+        if getattr(lbl, "_lipad_mtime", None) == mtime:
             return
         try:
             img = Image.open(path)
@@ -475,33 +570,35 @@ class LipadQuantizedApp(ctk.CTk):
             pass
 
     def _refresh_live_preview_chrome(self, status_text: str | None = None) -> None:
-        caption = getattr(self, "_live_preview_caption", None)
-        if caption is not None and caption.winfo_exists():
-            caption.configure(
-                text="LIVE" if self._live_running else "NO SIGNAL",
-                text_color=self.tokens.accent if self._live_running else self.tokens.inverted_muted,
-            )
-        lbl = getattr(self, "live_preview_lbl", None)
-        if lbl is None or not lbl.winfo_exists():
-            return
-        path = self._live_preview_path()
-        if os.path.exists(path) and self._live_running:
-            return
-        msg = status_text or self.last_run_status.get() or "Waiting for IMX519 stream…"
-        try:
-            lbl.configure(image="", text=msg)
-        except Exception:
-            pass
+        for caption_name in ("_live_raw_preview_caption", "_live_inference_preview_caption"):
+            caption = getattr(self, caption_name, None)
+            if caption is not None and caption.winfo_exists():
+                caption.configure(
+                    text="LIVE" if self._live_running else "NO SIGNAL",
+                    text_color=self.tokens.accent if self._live_running else self.tokens.inverted_muted,
+                )
+        previews = (
+            ("live_raw_preview_lbl", self._live_raw_preview_path(), "Waiting for raw IMX519 frames…"),
+            ("live_preview_lbl", self._live_preview_path(), "Waiting for inference frames…"),
+        )
+        for label_name, path, fallback in previews:
+            lbl = getattr(self, label_name, None)
+            if lbl is None or not lbl.winfo_exists() or (os.path.exists(path) and self._live_running):
+                continue
+            try:
+                lbl.configure(image="", text=status_text or self.last_run_status.get() or fallback)
+            except Exception:
+                pass
 
     def _clear_live_preview(self) -> None:
         self._live_preview_mtime = None
         self._live_preview_imgtk = None
-        path = self._live_preview_path()
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-        except OSError:
-            pass
+        for path in (self._live_preview_path(), self._live_raw_preview_path()):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
         self._refresh_live_preview_chrome("Live analysis stopped. Start again to confirm the Pi link.")
 
     def _schedule_live_preview(self) -> None:
@@ -517,8 +614,9 @@ class LipadQuantizedApp(ctk.CTk):
         self._live_preview_job = None
         if not self._live_running:
             return
-        self._apply_preview_image(getattr(self, "live_preview_lbl", None))
-        self._apply_preview_image(getattr(self, "analysis_live_preview_lbl", None))
+        self._apply_preview_image(getattr(self, "live_raw_preview_lbl", None), self._live_raw_preview_path())
+        self._apply_preview_image(getattr(self, "live_preview_lbl", None), self._live_preview_path())
+        self._apply_preview_image(getattr(self, "analysis_live_preview_lbl", None), self._live_preview_path())
         self._live_preview_job = self.after(40, self._tick_live_preview)
 
     def _parse_pi_ssh_target(self) -> tuple[str, str, str]:
@@ -642,6 +740,18 @@ class LipadQuantizedApp(ctk.CTk):
             if self.engine_process is not None:
                 self._set_status("Engine already running. Stop it first.")
                 return
+        detected_ip = self._detect_local_ipv4()
+        configured_ip = (self.live_pc_ip.get() or "").strip()
+        if detected_ip and configured_ip != detected_ip:
+            use_detected = messagebox.askyesno(
+                "PC IP address changed",
+                f"The live stream is configured for {configured_ip or 'no address'}, but Windows is "
+                f"currently using {detected_ip}.\n\nUse {detected_ip} for the Raspberry Pi stream?",
+                icon="warning",
+                parent=self,
+            )
+            if use_detected:
+                self.live_pc_ip.set(detected_ip)
         self._set_status("Checking Raspberry Pi connection…")
         show_pi_link_dialog(self, self.tokens, on_confirm=self._launch_live_engine)
 
@@ -656,11 +766,12 @@ class LipadQuantizedApp(ctk.CTk):
             self._live_running = True
 
         gsd, stride, inf_w, inspection, corrosion_env = self._parse_engine_tuning()
-        host, _pc_ip, port, width, height, _bitrate = self._parse_live_settings()
+        host, _pc_ip, port, width, height, _bitrate, protocol = self._parse_live_settings()
         os.makedirs(self._data_dir(), exist_ok=True)
         preview = self._live_preview_path()
+        raw_preview = self._live_raw_preview_path()
         ready_flag = self._live_ready_flag_path()
-        for stale in (preview, ready_flag):
+        for stale in (preview, raw_preview, ready_flag):
             try:
                 if os.path.exists(stale):
                     os.remove(stale)
@@ -673,9 +784,11 @@ class LipadQuantizedApp(ctk.CTk):
             "--live",
             "--listen_host", host,
             "--listen_port", str(port),
+            "--stream_protocol", protocol,
             "--stream_width", str(width),
             "--stream_height", str(height),
             "--preview_jpeg", preview,
+            "--raw_preview_jpeg", raw_preview,
             "--ready_flag", ready_flag,
             *self._engine_common_args(gsd, stride, inf_w, inspection, corrosion_env),
         ]

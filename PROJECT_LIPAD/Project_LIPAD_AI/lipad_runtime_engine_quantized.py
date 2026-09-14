@@ -44,23 +44,36 @@ def parse_arguments():
     parser.add_argument(
         "--live",
         action="store_true",
-        help="Listen for IMX519 MPEG-TS over TCP (rpicam-vid → this PC).",
+        help="Receive IMX519 MPEG-TS over TCP or UDP (rpicam-vid → this PC).",
     )
-    parser.add_argument("--listen_host", type=str, default="0.0.0.0", help="TCP listen bind address")
-    parser.add_argument("--listen_port", type=int, default=5000, help="TCP listen port")
+    parser.add_argument("--listen_host", type=str, default="0.0.0.0", help="TCP/UDP receive bind address")
+    parser.add_argument("--listen_port", type=int, default=5000, help="TCP or UDP receive port")
+    parser.add_argument(
+        "--stream_protocol",
+        type=str.lower,
+        choices=["tcp", "udp"],
+        default="tcp",
+        help="Live MPEG-TS transport protocol",
+    )
     parser.add_argument("--stream_width", type=int, default=1280, help="Expected live stream width")
     parser.add_argument("--stream_height", type=int, default=720, help="Expected live stream height")
     parser.add_argument(
         "--preview_jpeg",
         type=str,
         default=None,
-        help="Atomic JPEG path for the desktop app live view (annotated frames).",
+        help="Atomic JPEG path for the desktop app inference/annotated live view.",
+    )
+    parser.add_argument(
+        "--raw_preview_jpeg",
+        type=str,
+        default=None,
+        help="Atomic JPEG path for the desktop app raw live view.",
     )
     parser.add_argument(
         "--ready_flag",
         type=str,
         default=None,
-        help="Touch this file once the TCP listener is bound so the app can start rpicam-vid.",
+        help="Touch this file once the live receiver is ready so the app can start rpicam-vid.",
     )
     parser.add_argument(
         "--weights",
@@ -185,6 +198,34 @@ def _resolve_inference_device(weights_path: str) -> str | int:
     except Exception:
         pass
     return "cpu"
+
+
+def _patch_onnxruntime_webgpu_compatibility() -> None:
+    """Avoid a broken WebGPU capability probe in mismatched ONNX Runtime installs.
+
+    Some Windows installations pair a newer Python wrapper with an older compiled
+    ONNX Runtime extension. CPU inference does not use WebGPU graph capture, but
+    the wrapper still probes for its extension method before every ``session.run``.
+    """
+    try:
+        from onnxruntime.capi import onnxruntime_inference_collection as ort_collection
+
+        original = ort_collection.InferenceSession._validate_graph_capture_run_api
+        if getattr(original, "_lipad_compatibility_patch", False):
+            return
+
+        def _validate_graph_capture_run_api(self, run_options=None):
+            if not hasattr(self._sess, "is_webgpu_graph_capture_enabled"):
+                return
+            return original(self, run_options)
+
+        _validate_graph_capture_run_api._lipad_compatibility_patch = True
+        ort_collection.InferenceSession._validate_graph_capture_run_api = (
+            _validate_graph_capture_run_api
+        )
+        print("[SYSTEM] Applied ONNX Runtime CPU compatibility patch.")
+    except ImportError:
+        pass
 
 
 def _ensure_parent_dir(path: str) -> None:
@@ -430,9 +471,11 @@ def _run_corrosion_live(args, base_gsd, source_label, annotate_corrosion_frame, 
         listen_port=args.listen_port,
         stream_width=args.stream_width,
         stream_height=args.stream_height,
+        protocol=args.stream_protocol,
     )
     mark_listen_ready(getattr(args, "ready_flag", None))
     publisher = PreviewJpegPublisher(args.preview_jpeg) if args.preview_jpeg else None
+    raw_publisher = PreviewJpegPublisher(args.raw_preview_jpeg) if args.raw_preview_jpeg else None
     patch_stats: dict[int, dict] = {}
     next_patch_id = 1
     frame_idx = 0
@@ -453,6 +496,8 @@ def _run_corrosion_live(args, base_gsd, source_label, annotate_corrosion_frame, 
             processed += 1
             if args.max_frames and processed > args.max_frames:
                 break
+            if raw_publisher is not None:
+                raw_publisher.publish(frame)
             display, next_patch_id = annotate_corrosion_frame(
                 frame, args.corrosion_env, patch_stats, next_patch_id
             )
@@ -479,6 +524,8 @@ def _run_corrosion_live(args, base_gsd, source_label, annotate_corrosion_frame, 
         source.close()
         if publisher is not None:
             publisher.close()
+        if raw_publisher is not None:
+            raw_publisher.close()
         if not args.no_preview:
             cv2.destroyAllWindows()
     return patch_stats_to_rows(
@@ -580,7 +627,7 @@ def main():
             sys.exit(1)
 
     source_label = (
-        f"tcp://{args.listen_host}:{args.listen_port}"
+        f"{args.stream_protocol}://{args.listen_host}:{args.listen_port}"
         if args.live
         else os.path.abspath(args.video)
     )
@@ -619,6 +666,9 @@ def main():
         sys.exit(1)
 
     source = None
+    raw_preview_pub = None
+    raw_preview_stop = threading.Event()
+    raw_preview_thread = None
     if args.live:
         source = open_video_source(
             args.video,
@@ -627,18 +677,45 @@ def main():
             listen_port=args.listen_port,
             stream_width=args.stream_width,
             stream_height=args.stream_height,
+            protocol=args.stream_protocol,
         )
         mark_listen_ready(args.ready_flag)
-        print("[LIVE] TCP listener is bound. Start rpicam-vid on the Pi now.")
+        print(f"[LIVE] {args.stream_protocol.upper()} receiver is ready. Start rpicam-vid on the Pi now.")
+        raw_preview_pub = PreviewJpegPublisher(args.raw_preview_jpeg) if args.raw_preview_jpeg else None
 
+        if raw_preview_pub is not None:
+            def _publish_raw_while_model_loads() -> None:
+                while not raw_preview_stop.is_set():
+                    ok, frame = source.read(timeout=0.1)
+                    if ok and frame is not None:
+                        raw_preview_pub.publish(frame)
+                    elif getattr(source, "eof", False):
+                        return
+
+            raw_preview_thread = threading.Thread(
+                target=_publish_raw_while_model_loads,
+                daemon=True,
+                name="raw-preview-warmup",
+            )
+            raw_preview_thread.start()
+
+    _patch_onnxruntime_webgpu_compatibility()
     from ultralytics import YOLO
 
     try:
         model = YOLO(args.weights, task="segment")
     except Exception:
+        raw_preview_stop.set()
+        if raw_preview_thread is not None:
+            raw_preview_thread.join(timeout=1)
+        if raw_preview_pub is not None:
+            raw_preview_pub.close()
         if source is not None:
             source.close()
         raise
+    raw_preview_stop.set()
+    if raw_preview_thread is not None:
+        raw_preview_thread.join(timeout=1)
 
     device_context = _resolve_inference_device(args.weights)
 
@@ -653,6 +730,7 @@ def main():
             listen_port=args.listen_port,
             stream_width=args.stream_width,
             stream_height=args.stream_height,
+            protocol=args.stream_protocol,
         )
     fps = float(getattr(source, "fps", 30.0) or 30.0)
     native_width = int(getattr(source, "width", 0) or 0)
@@ -702,6 +780,12 @@ def main():
             processed_frame_counter += 1
             if args.max_frames and processed_frame_counter > args.max_frames:
                 break
+
+            # Publish the exact decoded frame that enters inference. This keeps
+            # the raw and annotated desktop views aligned, while still showing
+            # raw video if inference raises an exception.
+            if raw_preview_pub is not None:
+                raw_preview_pub.publish(current_frame)
 
             display_frame = current_frame.copy()
 
@@ -926,6 +1010,8 @@ def main():
         source.close()
         if preview_pub is not None:
             preview_pub.close()
+        if raw_preview_pub is not None:
+            raw_preview_pub.close()
         if writer is not None:
             writer.release()
         if not args.no_preview:

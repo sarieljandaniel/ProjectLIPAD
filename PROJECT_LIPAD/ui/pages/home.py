@@ -19,7 +19,7 @@ from ui.theme import ThemeTokens
 
 FIELD_STEPS = [
     "Put this PC and the Raspberry Pi on the same LAN. Confirm the PC IP (default 192.168.1.47) and that the Pi answers as lipad@lipad.local.",
-    "Open Inspection Manager, pick Crack or Corrosion, then Start live analysis. Confirm the Pi SSH link, then the app listens on TCP 5000 and starts rpicam-vid.",
+    "Allow the selected live-stream port in Windows Firewall below. Open Inspection Manager, choose TCP or UDP, then start live analysis. Confirm the Pi SSH link and the app starts rpicam-vid.",
     "LiDAR distance still arrives as UDP telemetry on port 50007 and is used for GSD while the quantized YOLO model runs.",
     "When a run finishes, open Analysis Overview for detections, then export a CSV from Reports.",
 ]
@@ -47,7 +47,7 @@ def render_home(app, parent, tokens: ThemeTokens) -> None:
         hero,
         tokens,
         "Project LiPAD inspects cracks and corrosion with a quantized YOLO model. "
-        "Live video comes from the IMX519 over TCP: this PC listens first, then the app "
+        "Live video comes from the IMX519 over TCP or UDP: this PC listens first, then the app "
         "SSHs to lipad@lipad.local and starts rpicam-vid. LiDAR telemetry on UDP 50007 "
         "updates distance while results land in Analysis Overview.",
         wraplength=560,
@@ -110,9 +110,49 @@ def render_home(app, parent, tokens: ThemeTokens) -> None:
         "0.0",
         "Waiting for UDP LiDAR packets on port 50007. "
         "Start live analysis from Inspection Manager to SSH rpicam-vid on lipad@lipad.local "
-        "and stream MPEG-TS to this PC on TCP 5000.\n",
+        "and stream MPEG-TS to this PC on the selected TCP or UDP port.\n",
     )
     app.telemetry_log.configure(state="disabled")
+
+    # Firewall permission
+    firewall = newsprint_card(right, tokens)
+    firewall.pack(fill="x", pady=(0, 16))
+    firewall_inner = ctk.CTkFrame(firewall, fg_color="transparent")
+    firewall_inner.pack(fill="x", padx=16, pady=14)
+    meta_label(firewall_inner, tokens, "Live-stream permission").pack(anchor="w")
+    ctk.CTkLabel(
+        firewall_inner,
+        text="Allow the Raspberry Pi through Windows Firewall",
+        text_color=tokens.fg,
+        font=sans_font(16, "bold"),
+        anchor="w",
+    ).pack(anchor="w", pady=(6, 0))
+    body_label(
+        firewall_inner,
+        tokens,
+        "Uses the port and TCP/UDP protocol currently selected in Inspection Manager. "
+        "You will be asked to approve a Windows administrator prompt. The rule permits "
+        "inbound traffic on the selected port across Domain, Private, and Public networks. "
+        "Only approve this on a network you trust.",
+        wraplength=280,
+    ).pack(anchor="w", pady=(8, 10))
+    newsprint_button(
+        firewall_inner,
+        tokens,
+        "Allow selected port",
+        command=app.request_live_firewall_access,
+        width=220,
+    ).pack(anchor="w")
+    app._live_firewall_status_value = ctk.CTkLabel(
+        firewall_inner,
+        textvariable=app.live_firewall_status,
+        text_color=tokens.muted,
+        font=mono_font(10),
+        anchor="w",
+        justify="left",
+        wraplength=280,
+    )
+    app._live_firewall_status_value.pack(anchor="w", pady=(10, 0))
 
     # Field guide (inverted)
     guide = newsprint_card(right, tokens, inverted=True)

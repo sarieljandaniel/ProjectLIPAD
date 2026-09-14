@@ -1,10 +1,13 @@
-"""Low-latency MPEG-TS TCP listener (ffplay-equivalent) for IMX519 / rpicam-vid.
+"""Low-latency MPEG-TS TCP/UDP receiver for IMX519 / rpicam-vid.
 
-PC side equivalent of:
+TCP PC side equivalent:
   ffplay -listen 1 -i tcp://0.0.0.0:5000 -fflags nobuffer -flags low_delay
 
-Pi side still connects with:
-  rpicam-vid ... --libav-format mpegts -o tcp://<PC_IP>:5000
+UDP PC side equivalent:
+  ffplay -i udp://0.0.0.0:5000 -fflags nobuffer -flags low_delay
+
+Pi side sends to the selected protocol, for example:
+  rpicam-vid ... --libav-format mpegts -o udp://<PC_IP>:5000
 
 A dedicated drain thread always keeps only the newest decoded frame so inference
 never sits on a growing queue.
@@ -24,19 +27,28 @@ import cv2
 import numpy as np
 
 
+def _normalize_protocol(protocol: str) -> str:
+    normalized = (protocol or "tcp").strip().lower()
+    if normalized not in {"tcp", "udp"}:
+        raise ValueError("protocol must be either 'tcp' or 'udp'")
+    return normalized
+
+
 def build_rpicam_command(
     pc_ip: str,
     port: int,
     width: int = 1280,
     height: int = 720,
     bitrate: int = 3_000_000,
+    protocol: str = "tcp",
 ) -> str:
+    protocol = _normalize_protocol(protocol)
     return (
         "rpicam-vid -t 0 "
         f"--width {int(width)} --height {int(height)} "
         f"--bitrate {int(bitrate)} --inline "
         "--codec libav --libav-format mpegts "
-        f"-o tcp://{pc_ip}:{int(port)}"
+        f"-o {protocol}://{pc_ip}:{int(port)}"
     )
 
 
@@ -75,7 +87,7 @@ class FileFrameSource:
 
 
 class LiveTcpFrameSource:
-    """Listen for one MPEG-TS TCP client and expose only the latest frame."""
+    """Receive a live MPEG-TS TCP or UDP stream and expose only the latest frame."""
 
     def __init__(
         self,
@@ -83,11 +95,13 @@ class LiveTcpFrameSource:
         port: int = 5000,
         width: int = 1280,
         height: int = 720,
+        protocol: str = "tcp",
     ) -> None:
         self.host = host
         self.port = int(port)
         self.width = int(width)
         self.height = int(height)
+        self._protocol = _normalize_protocol(protocol)
         self.fps = 30.0
         self.eof = False
         self._frame_size = self.width * self.height * 3
@@ -121,13 +135,13 @@ class LiveTcpFrameSource:
                 except (OSError, RuntimeError) as exc:
                     print(
                         f"[LIVE] ffmpeg spawn failed ({exc}). "
-                        "Opening OpenCV TCP listen in the background so the Pi can still connect.",
+                        "Opening OpenCV live capture in the background so the Pi can still connect.",
                         flush=True,
                     )
                     self._use_ffmpeg = False
                     self._opencv_deferred = True
             else:
-                print("[LIVE] ffmpeg not on PATH — using OpenCV TCP listen.", flush=True)
+                print("[LIVE] ffmpeg not on PATH — using OpenCV live capture.", flush=True)
                 self._opencv_deferred = True
         except Exception:
             self._ffmpeg_log.close()
@@ -139,9 +153,9 @@ class LiveTcpFrameSource:
             time.sleep(0.35)
 
     def _ffmpeg_cmd(self) -> list[str]:
-        url = f"tcp://{self.host}:{self.port}"
+        url = f"{self._protocol}://{self.host}:{self.port}"
         binary = self._ffmpeg_bin or "ffmpeg"
-        return [
+        cmd = [
             binary,
             "-hide_banner",
             "-nostats",
@@ -155,10 +169,12 @@ class LiveTcpFrameSource:
             "32",
             "-analyzeduration",
             "0",
-            "-listen",
-            "1",
-            "-i",
-            url,
+        ]
+        # TCP must listen for the Pi to connect; UDP binds directly to its port.
+        if self._protocol == "tcp":
+            cmd.extend(["-listen", "1"])
+        cmd.extend([
+            "-i", url,
             "-an",
             "-map",
             "0:v:0",
@@ -169,7 +185,8 @@ class LiveTcpFrameSource:
             "-fps_mode",
             "passthrough",
             "pipe:1",
-        ]
+        ])
+        return cmd
 
     def _start_ffmpeg(self) -> None:
         kwargs: dict = {
@@ -198,7 +215,10 @@ class LiveTcpFrameSource:
             )
 
     def _start_opencv(self) -> None:
-        url = f"tcp://{self.host}:{self.port}?listen=1"
+        if self._protocol == "tcp":
+            url = f"tcp://{self.host}:{self.port}?listen=1"
+        else:
+            url = f"udp://{self.host}:{self.port}"
         self._cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
@@ -217,7 +237,8 @@ class LiveTcpFrameSource:
     def _drain(self) -> None:
         try:
             if self._opencv_deferred and self._proc is None:
-                print("[LIVE] Waiting for IMX519 TCP client (OpenCV listen)…", flush=True)
+                mode = "TCP client" if self._protocol == "tcp" else "UDP packets"
+                print(f"[LIVE] Waiting for IMX519 {mode} (OpenCV)…", flush=True)
                 self._start_opencv()
             if self._proc is not None:
                 while self._running:
@@ -309,10 +330,12 @@ def open_video_source(
     listen_port: int = 5000,
     stream_width: int = 1280,
     stream_height: int = 720,
+    protocol: str = "tcp",
 ) -> FrameSource:
+    protocol = _normalize_protocol(protocol)
     if live:
         print(
-            f"[LIVE] Listening for IMX519 MPEG-TS on tcp://{listen_host}:{listen_port} "
+            f"[LIVE] Receiving IMX519 MPEG-TS on {protocol}://{listen_host}:{listen_port} "
             f"({stream_width}x{stream_height}, low_delay)"
         )
         return LiveTcpFrameSource(
@@ -320,6 +343,7 @@ def open_video_source(
             port=listen_port,
             width=stream_width,
             height=stream_height,
+            protocol=protocol,
         )
     if not video_path:
         raise ValueError("Video path is required unless --live is set")

@@ -1,3 +1,2 @@
 TimestampUTC,Video,Annotated_Video,Type,Severity,Crack_ID,Avg_Length_mm,Avg_Width_mm,Avg_Orientation_Deg,Avg_Area_mm2,Total_Frames_Tracked,Critical_Shear_Alert,GSD_mm_per_px
-2026-09-09T17:51:02+00:00,C:\Users\lenovo\Project LIPAD VERSION2\Corrosion\LIPAD_YOLO_TRAINING\crack_detection\own_data\videotest2.mp4,C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\data\annotated\videotest2_annotated.mp4,Crack,Structural,Crack#1,72.28,2.4732,-55.7,204.62,6,1,0.5436
-2026-09-09T17:51:02+00:00,C:\Users\lenovo\Project LIPAD VERSION2\Corrosion\LIPAD_YOLO_TRAINING\crack_detection\own_data\videotest2.mp4,C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\data\annotated\videotest2_annotated.mp4,Crack,Moderate,Crack#2,281.21,2.8453,-27.9,866.11,158,0,0.5436
+2026-09-14T17:35:08+00:00,udp://0.0.0.0:5000,,Crack,Structural,Crack#1,297.73,2.1527,-31.0,652.22,4200,1,0.5436

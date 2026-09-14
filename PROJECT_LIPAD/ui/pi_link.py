@@ -195,7 +195,7 @@ def show_pi_link_dialog(app, tokens: ThemeTokens, on_confirm) -> None:
         app._pi_link_win = None
 
     user, host, password = app._parse_pi_ssh_target()
-    _listen_host, pc_ip, port, width, height, _bitrate = app._parse_live_settings()
+    _listen_host, pc_ip, port, width, height, _bitrate, protocol = app._parse_live_settings()
 
     win = ctk.CTkToplevel(app)
     app._pi_link_win = win
@@ -230,7 +230,7 @@ def show_pi_link_dialog(app, tokens: ThemeTokens, on_confirm) -> None:
         text=(
             f"This PC IP: {pc_ip}\n"
             f"Pi SSH: {user}@{host}\n"
-            f"Stream: tcp://{pc_ip}:{port}  ({width}×{height})"
+            f"Stream: {protocol}://{pc_ip}:{port}  ({width}×{height})"
         ),
         text_color=tokens.fg,
         font=sans_font(12),

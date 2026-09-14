@@ -41,10 +41,10 @@ def render_inspection(app, parent, tokens: ThemeTokens) -> None:
     live_inner = ctk.CTkFrame(live_card, fg_color="transparent")
     live_inner.pack(fill="both", expand=True, padx=16, pady=14)
     live_inner.grid_columnconfigure(0, weight=1)
-    live_inner.grid_columnconfigure(1, weight=2)
+    live_inner.grid_columnconfigure(1, weight=1)
 
     controls = ctk.CTkFrame(live_inner, fg_color="transparent")
-    controls.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+    controls.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
     meta_label(controls, tokens, "IMX519 live feed").pack(anchor="w")
     body_label(
         controls,
@@ -57,7 +57,14 @@ def render_inspection(app, parent, tokens: ThemeTokens) -> None:
     live_row.pack(fill="x", pady=(0, 8))
     w_ip, _ = labeled_entry(live_row, tokens, "Pi connects to (PC IP)", app.live_pc_ip, width=150)
     w_ip.pack(side="left", padx=(0, 12))
-    w_port, _ = labeled_entry(live_row, tokens, "TCP port", app.live_listen_port, width=80)
+    w_protocol = ctk.CTkOptionMenu(
+        live_row,
+        values=["tcp", "udp"],
+        variable=app.live_protocol,
+        width=80,
+    )
+    w_protocol.pack(side="left", padx=(0, 12))
+    w_port, _ = labeled_entry(live_row, tokens, "Port", app.live_listen_port, width=80)
     w_port.pack(side="left", padx=(0, 12))
     w_lw, _ = labeled_entry(live_row, tokens, "Width", app.live_width, width=80)
     w_lw.pack(side="left", padx=(0, 12))
@@ -86,7 +93,7 @@ def render_inspection(app, parent, tokens: ThemeTokens) -> None:
     app.rpicam_cmd_box.pack(fill="x", pady=(0, 8))
     app._refresh_rpicam_command_box()
     if not getattr(app, "_rpicam_traces_bound", False):
-        for var in (app.live_pc_ip, app.live_listen_port, app.live_width, app.live_height, app.live_bitrate):
+        for var in (app.live_pc_ip, app.live_listen_port, app.live_width, app.live_height, app.live_bitrate, app.live_protocol):
             var.trace_add("write", lambda *_: app._refresh_rpicam_command_box())
         app._rpicam_traces_bound = True
 
@@ -105,34 +112,65 @@ def render_inspection(app, parent, tokens: ThemeTokens) -> None:
     app.status_lbl.pack(anchor="w")
 
     preview_wrap = ctk.CTkFrame(live_inner, fg_color=tokens.console_bg, corner_radius=0)
-    preview_wrap.grid(row=0, column=1, sticky="nsew")
+    preview_wrap.grid(row=1, column=0, columnspan=2, sticky="nsew")
     ph = ctk.CTkFrame(preview_wrap, fg_color="transparent")
     ph.pack(fill="x", padx=12, pady=(10, 0))
-    meta_label(ph, tokens, "Live viewer", inverted=True).pack(side="left")
-    app._live_preview_caption = ctk.CTkLabel(
-        ph,
-        text="NO SIGNAL" if not app._live_running else "LIVE",
+    meta_label(ph, tokens, "Synchronized live viewers", inverted=True).pack(side="left")
+
+    viewers = ctk.CTkFrame(preview_wrap, fg_color="transparent")
+    viewers.pack(fill="both", expand=True, padx=12, pady=12)
+    viewers.grid_columnconfigure((0, 1), weight=1, uniform="live-viewer")
+
+    raw_viewer = ctk.CTkFrame(viewers, fg_color=tokens.console_bg, corner_radius=0)
+    raw_viewer.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+    raw_header = ctk.CTkFrame(raw_viewer, fg_color="transparent")
+    raw_header.pack(fill="x")
+    meta_label(raw_header, tokens, "Raw camera", inverted=True).pack(side="left")
+    app._live_raw_preview_caption = ctk.CTkLabel(
+        raw_header,
+        text="LIVE" if app._live_running else "NO SIGNAL",
         text_color=tokens.accent if app._live_running else tokens.inverted_muted,
         font=mono_font(9, "bold"),
     )
-    app._live_preview_caption.pack(side="right")
-
-    waiting = app.last_run_status.get() if app._live_running else "Waiting for IMX519 stream…"
-    app.live_preview_lbl = ctk.CTkLabel(
-        preview_wrap,
-        text=waiting,
+    app._live_raw_preview_caption.pack(side="right")
+    app.live_raw_preview_lbl = ctk.CTkLabel(
+        raw_viewer,
+        text="Waiting for raw IMX519 frames…",
         text_color=tokens.console_fg,
-        font=mono_font(12),
+        font=mono_font(11),
         anchor="center",
         justify="center",
         fg_color=tokens.console_bg,
-        width=640,
-        height=360,
+        height=320,
     )
-    app.live_preview_lbl.pack(fill="both", expand=True, padx=12, pady=12)
+    app.live_raw_preview_lbl.pack(fill="both", expand=True, pady=(8, 0))
+
+    inference_viewer = ctk.CTkFrame(viewers, fg_color=tokens.console_bg, corner_radius=0)
+    inference_viewer.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+    inference_header = ctk.CTkFrame(inference_viewer, fg_color="transparent")
+    inference_header.pack(fill="x")
+    meta_label(inference_header, tokens, "Inference output", inverted=True).pack(side="left")
+    app._live_inference_preview_caption = ctk.CTkLabel(
+        inference_header,
+        text="LIVE" if app._live_running else "NO SIGNAL",
+        text_color=tokens.accent if app._live_running else tokens.inverted_muted,
+        font=mono_font(9, "bold"),
+    )
+    app._live_inference_preview_caption.pack(side="right")
+    app.live_preview_lbl = ctk.CTkLabel(
+        inference_viewer,
+        text="Waiting for inference frames…",
+        text_color=tokens.console_fg,
+        font=mono_font(11),
+        anchor="center",
+        justify="center",
+        fg_color=tokens.console_bg,
+        height=320,
+    )
+    app.live_preview_lbl.pack(fill="both", expand=True, pady=(8, 0))
     ctk.CTkLabel(
         preview_wrap,
-        text="This panel is the live feed. Annotated frames appear here after the model loads the first TCP packet.",
+        text="Raw and inference frames originate from the same decoded camera frame. The inference view trails only by processing time.",
         text_color=tokens.inverted_muted,
         font=sans_font(12),
         anchor="w",
