@@ -154,6 +154,44 @@ def render_home(app, parent, tokens: ThemeTokens) -> None:
     )
     app._live_firewall_status_value.pack(anchor="w", pady=(10, 0))
 
+    libraries = newsprint_card(right, tokens)
+    libraries.pack(fill="x", pady=(0, 16))
+    libraries_inner = ctk.CTkFrame(libraries, fg_color="transparent")
+    libraries_inner.pack(fill="x", padx=16, pady=14)
+    meta_label(libraries_inner, tokens, "Runtime libraries").pack(anchor="w")
+    ctk.CTkLabel(
+        libraries_inner,
+        text="Download packages required to run this app",
+        text_color=tokens.fg,
+        font=sans_font(16, "bold"),
+        anchor="w",
+    ).pack(anchor="w", pady=(6, 0))
+    body_label(
+        libraries_inner,
+        tokens,
+        "Installs customtkinter, pandas, pillow, paramiko, OpenCV, ultralytics, "
+        "onnxruntime, and FFmpeg after you allow the prompt. Needed for the UI, "
+        "Pi SSH, live MPEG-TS receive, and quantized YOLO analysis.",
+        wraplength=280,
+    ).pack(anchor="w", pady=(8, 10))
+    newsprint_button(
+        libraries_inner,
+        tokens,
+        "Install libraries",
+        command=app.request_prerequisite_install,
+        width=220,
+    ).pack(anchor="w")
+    app._prereq_status_value = ctk.CTkLabel(
+        libraries_inner,
+        textvariable=app.prereq_status,
+        text_color=tokens.muted,
+        font=mono_font(10),
+        anchor="w",
+        justify="left",
+        wraplength=280,
+    )
+    app._prereq_status_value.pack(anchor="w", pady=(10, 0))
+
     # Field guide (inverted)
     guide = newsprint_card(right, tokens, inverted=True)
     guide.pack(fill="both", expand=True)

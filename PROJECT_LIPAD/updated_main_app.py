@@ -10,6 +10,22 @@ import sys
 import threading
 import time
 
+_REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from ui.prerequisites import (
+    bootstrap_if_missing,
+    ensure_local_ffmpeg_on_path,
+    install_prerequisites,
+    request_prerequisite_install as run_prerequisite_installer,
+    summarize_prerequisites,
+)
+
+ensure_local_ffmpeg_on_path(_REPO_ROOT)
+if __name__ == "__main__":
+    bootstrap_if_missing(_REPO_ROOT)
+
 import customtkinter as ctk
 import pandas as pd
 from PIL import Image
@@ -75,6 +91,8 @@ class LipadQuantizedApp(ctk.CTk):
         self.live_firewall_status = ctk.StringVar(
             value="Not configured — allow the selected live-stream port before connecting the Pi."
         )
+        self.prereq_status = ctk.StringVar(value=summarize_prerequisites(self._repo_root()))
+        self._prereq_installing = False
         self.pi_ssh_host = ctk.StringVar(value="lipad.local")
         self.pi_ssh_user = ctk.StringVar(value="lipad")
         self.pi_ssh_password = ctk.StringVar(value="109791")
@@ -484,6 +502,38 @@ class LipadQuantizedApp(ctk.CTk):
             self.after(0, lambda: self.live_firewall_status.set(message))
 
         threading.Thread(target=_add_rule, daemon=True, name="live-firewall-rule").start()
+
+    def request_prerequisite_install(self) -> None:
+        """Ask for consent, then pip-install libraries and download FFmpeg if needed."""
+        if self._prereq_installing:
+            self.prereq_status.set("Library install is already running.")
+            return
+        permitted = run_prerequisite_installer(
+            self._repo_root(),
+            parent=self,
+            force=True,
+            install=False,
+        )
+        if not permitted:
+            self.prereq_status.set("Library install permission was not granted.")
+            return
+        self._prereq_installing = True
+        self.prereq_status.set("Installing required libraries…")
+
+        def _on_status(message: str) -> None:
+            self.after(0, lambda m=message: self.prereq_status.set(m))
+
+        def _run() -> None:
+            try:
+                result = install_prerequisites(self._repo_root(), on_status=_on_status)
+                ensure_local_ffmpeg_on_path(self._repo_root())
+                self.after(0, lambda m=result: self.prereq_status.set(m))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self.prereq_status.set(f"Library install failed: {e}"))
+            finally:
+                self._prereq_installing = False
+
+        threading.Thread(target=_run, daemon=True, name="lipad-prereq-install").start()
 
     def _refresh_rpicam_command_box(self) -> None:
         if not hasattr(self, "rpicam_cmd_box") or not self.rpicam_cmd_box.winfo_exists():

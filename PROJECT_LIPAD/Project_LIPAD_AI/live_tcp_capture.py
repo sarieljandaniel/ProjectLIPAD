@@ -4,7 +4,7 @@ TCP PC side equivalent:
   ffplay -listen 1 -i tcp://0.0.0.0:5000 -fflags nobuffer -flags low_delay
 
 UDP PC side equivalent:
-  ffplay -i udp://0.0.0.0:5000 -fflags nobuffer -flags low_delay
+  ffplay -i udp://0.0.0.0:5000 -fflags nobuffer -flags low_delay -framedrop
 
 Pi side sends to the selected protocol, for example:
   rpicam-vid ... --libav-format mpegts -o udp://<PC_IP>:5000
@@ -25,6 +25,27 @@ from typing import Protocol
 
 import cv2
 import numpy as np
+
+
+def _find_ffmpeg() -> str | None:
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = (
+        os.path.join(here, "..", "tools", "ffmpeg", "bin", "ffmpeg.exe"),
+        os.path.join(here, "..", "tools", "ffmpeg", "bin", "ffmpeg"),
+        os.path.join(here, "..", "tools", "ffmpeg", "ffmpeg.exe"),
+    )
+    for candidate in candidates:
+        path = os.path.abspath(candidate)
+        if os.path.isfile(path):
+            bin_dir = os.path.dirname(path)
+            path_env = os.environ.get("PATH", "")
+            if bin_dir.lower() not in path_env.lower().split(os.pathsep):
+                os.environ["PATH"] = bin_dir + os.pathsep + path_env
+            return path
+    return None
 
 
 def _normalize_protocol(protocol: str) -> str:
@@ -112,7 +133,7 @@ class LiveTcpFrameSource:
         self._cap: cv2.VideoCapture | None = None
         self._thread: threading.Thread | None = None
         self._opencv_deferred = False
-        self._ffmpeg_bin = shutil.which("ffmpeg")
+        self._ffmpeg_bin = _find_ffmpeg()
         self._use_ffmpeg = self._ffmpeg_bin is not None
 
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
