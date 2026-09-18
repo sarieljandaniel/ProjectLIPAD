@@ -1,15 +1,18 @@
 [INFO] GSD mode: hypothetical — 0.5436 mm/px
 [INFO] Booting Quantized Project LIPAD Engine with BoT-SORT Tracking...
 [LIVE] Receiving IMX519 MPEG-TS on udp://0.0.0.0:5000 (1280x720, low_delay)
-[LIVE] ffmpeg not on PATH — using OpenCV live capture.
-[LIVE] Waiting for IMX519 UDP packets (OpenCV)…
 [LIVE] UDP receiver is ready. Start rpicam-vid on the Pi now.
+[SYSTEM] Applied ONNX Runtime CPU compatibility patch.
+[SYSTEM] ONNX inference will use CPU (ORT CUDA unavailable or misconfigured).
+[SYSTEM] Quantized model loaded â€” device: cpu
+  â€¢ C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx
+[SYSTEM] High-Fidelity Processing Canvas Locked: 1280x720
 Traceback (most recent call last):
-  File "C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 1045, in <module>
+  File "C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 1045, in <module>
     main()
-  File "C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 702, in main
-    _patch_onnxruntime_webgpu_compatibility()
-  File "C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 213, in _patch_onnxruntime_webgpu_compatibility
-    original = ort_collection.InferenceSession._validate_graph_capture_run_api
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: type object 'InferenceSession' has no attribute '_validate_graph_capture_run_api'
+  File "C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 767, in main
+    success, current_frame = source.read(timeout=2.0)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\Project_LIPAD_AI\live_tcp_capture.py", line 309, in read
+    time.sleep(0.001)
+KeyboardInterrupt
