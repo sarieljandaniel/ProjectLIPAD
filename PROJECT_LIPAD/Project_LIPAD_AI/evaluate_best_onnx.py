@@ -1,14 +1,8 @@
 """Evaluate the exact quantized Project LiPAD ONNX checkpoint.
 
-The script evaluates the deployed ONNX model against both crack validation
-configuration files supplied for the subset-m and subset-s datasets. It reports
-box and mask precision, recall, F1, mAP@0.50, mAP@0.50:0.95, and speed.
-
-Run from the ``PROJECT_LIPAD`` directory:
-
-    python Project_LIPAD_AI/evaluate_best_onnx.py
-
-Optional arguments can override the default Windows paths.
+The supplied subset YAML files were created on another machine and contain stale
+absolute paths. This script repairs those paths at runtime by resolving the
+training/validation folders relative to the local ``crack_detection`` folder.
 """
 
 from __future__ import annotations
@@ -16,9 +10,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
+import yaml
 from ultralytics import YOLO
 
 DEFAULT_WEIGHTS = Path(
@@ -47,23 +43,67 @@ def metric_value(metrics: Any, name: str) -> float:
     return float(value) if value is not None else 0.0
 
 
+def _find_split(dataset_root: Path, subset_name: str, split: str) -> tuple[Path, str]:
+    """Find a split and return its absolute directory plus a YAML-relative path."""
+    candidates = [
+        (dataset_root / subset_name / "images" / split, f"{subset_name}/images/{split}"),
+        (dataset_root / "images" / split, f"images/{split}"),
+    ]
+    for absolute, relative in candidates:
+        if absolute.is_dir():
+            return absolute, relative
+    checked = "\n".join(f"  - {path}" for path, _ in candidates)
+    raise FileNotFoundError(
+        f"Could not find the {split!r} image split for {subset_name!r}. Checked:\n{checked}\n"
+        "Update the dataset layout or pass a corrected YAML file."
+    )
+
+
+def _make_local_dataset_yaml(dataset_yaml: Path, split: str) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
+    """Create a temporary YAML with paths corrected for the current checkout."""
+    if not dataset_yaml.is_file():
+        raise FileNotFoundError(f"Dataset YAML not found: {dataset_yaml}")
+
+    config = yaml.safe_load(dataset_yaml.read_text(encoding="utf-8")) or {}
+    dataset_root = dataset_yaml.parent / "datasets"
+    subset_name = dataset_yaml.stem
+    _, train_relative = _find_split(dataset_root, subset_name, "train")
+    _, val_relative = _find_split(dataset_root, subset_name, split)
+
+    config["path"] = str(dataset_root.resolve())
+    config["train"] = train_relative
+    config["val"] = val_relative
+    config.pop("test", None)
+
+    temporary_directory = tempfile.TemporaryDirectory(prefix="lipad_eval_")
+    local_yaml = Path(temporary_directory.name) / f"{subset_name}.yaml"
+    local_yaml.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    print(f"[INFO] Repaired dataset YAML: {dataset_yaml}")
+    print(f"       path: {config['path']}")
+    print(f"       train: {config['train']}")
+    print(f"       val:   {config['val']}")
+    return local_yaml, temporary_directory
+
+
 def evaluate(weights: Path, data: Path, image_size: int, split: str) -> dict[str, Any]:
-    """Evaluate the exact ONNX checkpoint against one dataset YAML."""
+    """Evaluate the exact ONNX checkpoint against one repaired dataset YAML."""
     if not weights.is_file():
         raise FileNotFoundError(f"ONNX weights not found: {weights}")
-    if not data.is_file():
-        raise FileNotFoundError(f"Dataset YAML not found: {data}")
 
-    # Explicit task='segment' is required so ONNX mask metrics are evaluated.
-    model = YOLO(str(weights), task="segment")
-    validation = model.val(
-        data=str(data),
-        split=split,
-        imgsz=image_size,
-        plots=True,
-        verbose=False,
-        name=f"lipad_best_onnx_{data.stem}_{split}",
-    )
+    repaired_yaml, temporary_directory = _make_local_dataset_yaml(data, split)
+    try:
+        # Explicit task='segment' is required so ONNX mask metrics are evaluated.
+        model = YOLO(str(weights), task="segment")
+        validation = model.val(
+            data=str(repaired_yaml),
+            split="val",
+            imgsz=image_size,
+            plots=True,
+            verbose=False,
+            name=f"lipad_best_onnx_{data.stem}_{split}",
+        )
+    finally:
+        temporary_directory.cleanup()
 
     box = validation.box
     mask = validation.seg
@@ -105,20 +145,14 @@ def write_outputs(result: dict[str, Any], output_dir: Path) -> None:
     """Save machine-readable JSON and CSV summaries for one dataset."""
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_name = safe_dataset_name(Path(result["data"]))
-    (output_dir / f"{dataset_name}_metrics.json").write_text(
-        json.dumps(result, indent=2), encoding="utf-8"
-    )
-
+    (output_dir / f"{dataset_name}_metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     rows = []
     for category in ("box", "mask"):
         for metric, value in result[category].items():
             rows.append({"category": category, "metric": metric, "value": value})
     for metric, value in result["speed_ms_per_image"].items():
         rows.append({"category": "speed_ms_per_image", "metric": metric, "value": value})
-
-    with (output_dir / f"{dataset_name}_metrics.csv").open(
-        "w", newline="", encoding="utf-8"
-    ) as handle:
+    with (output_dir / f"{dataset_name}_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["category", "metric", "value"])
         writer.writeheader()
         writer.writerows(rows)
@@ -132,25 +166,11 @@ def write_combined_csv(results: list[dict[str, Any]], output_dir: Path) -> None:
         dataset = Path(result["data"]).stem
         for category in ("box", "mask"):
             for metric, value in result[category].items():
-                rows.append(
-                    {"dataset": dataset, "category": category, "metric": metric, "value": value}
-                )
+                rows.append({"dataset": dataset, "category": category, "metric": metric, "value": value})
         for metric, value in result["speed_ms_per_image"].items():
-            rows.append(
-                {
-                    "dataset": dataset,
-                    "category": "speed_ms_per_image",
-                    "metric": metric,
-                    "value": value,
-                }
-            )
-
-    with (output_dir / "combined_metrics.csv").open(
-        "w", newline="", encoding="utf-8"
-    ) as handle:
-        writer = csv.DictWriter(
-            handle, fieldnames=["dataset", "category", "metric", "value"]
-        )
+            rows.append({"dataset": dataset, "category": "speed_ms_per_image", "metric": metric, "value": value})
+    with (output_dir / "combined_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["dataset", "category", "metric", "value"])
         writer.writeheader()
         writer.writerows(rows)
 
@@ -174,18 +194,10 @@ def print_report(result: dict[str, Any]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
-    parser.add_argument(
-        "--data",
-        type=Path,
-        nargs="+",
-        default=list(DEFAULT_DATASETS),
-        help="One or more validation dataset YAML files.",
-    )
+    parser.add_argument("--data", type=Path, nargs="+", default=list(DEFAULT_DATASETS), help="Dataset YAML files.")
     parser.add_argument("--split", default="val", choices=("train", "val", "test"))
     parser.add_argument("--imgsz", type=int, default=DEFAULT_IMAGE_SIZE)
-    parser.add_argument(
-        "--output-dir", type=Path, default=Path("runs/lipad_best_onnx_metrics")
-    )
+    parser.add_argument("--output-dir", type=Path, default=Path("runs/lipad_best_onnx_metrics"))
     return parser.parse_args()
 
 
@@ -197,7 +209,6 @@ def main() -> None:
         results.append(result)
         write_outputs(result, args.output_dir)
         print_report(result)
-
     write_combined_csv(results, args.output_dir)
     combined_json = args.output_dir / "combined_metrics.json"
     combined_json.write_text(json.dumps(results, indent=2), encoding="utf-8")
