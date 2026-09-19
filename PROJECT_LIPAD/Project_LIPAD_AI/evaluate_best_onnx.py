@@ -1,13 +1,14 @@
 """Evaluate the exact quantized Project LiPAD ONNX checkpoint.
 
-This script evaluates the deployed crack model, rather than using metrics from
-an unrelated training run. It reports box and mask precision, recall, F1,
-mAP@0.50, mAP@0.50:0.95, and preprocessing/inference/post-processing speed.
+The script evaluates the deployed ONNX model against both crack validation
+configuration files supplied for the subset-m and subset-s datasets. It reports
+box and mask precision, recall, F1, mAP@0.50, mAP@0.50:0.95, and speed.
 
-Example:
-    python evaluate_best_onnx.py \
-        --data path/to/eval_config.yaml \
-        --weights "C:\\Users\\lenovo\\Project_LIPAD_V5\\ProjectLIPAD\\PROJECT_LIPAD\\models\\best.onnx"
+Run from the ``PROJECT_LIPAD`` directory:
+
+    python Project_LIPAD_AI/evaluate_best_onnx.py
+
+Optional arguments can override the default Windows paths.
 """
 
 from __future__ import annotations
@@ -20,7 +21,17 @@ from typing import Any
 
 from ultralytics import YOLO
 
-DEFAULT_WEIGHTS = r"C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\models\best.onnx"
+DEFAULT_WEIGHTS = Path(
+    r"C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\models\best.onnx"
+)
+DEFAULT_DATASETS = (
+    Path(
+        r"C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\LIPAD_YOLO_TRAINING\crack_detection\subset_m.yaml"
+    ),
+    Path(
+        r"C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\LIPAD_YOLO_TRAINING\crack_detection\subset_s.yaml"
+    ),
+)
 DEFAULT_IMAGE_SIZE = 640
 
 
@@ -37,7 +48,7 @@ def metric_value(metrics: Any, name: str) -> float:
 
 
 def evaluate(weights: Path, data: Path, image_size: int, split: str) -> dict[str, Any]:
-    """Evaluate the requested ONNX file on the requested dataset split."""
+    """Evaluate the exact ONNX checkpoint against one dataset YAML."""
     if not weights.is_file():
         raise FileNotFoundError(f"ONNX weights not found: {weights}")
     if not data.is_file():
@@ -51,12 +62,12 @@ def evaluate(weights: Path, data: Path, image_size: int, split: str) -> dict[str
         imgsz=image_size,
         plots=True,
         verbose=False,
-        name=f"lipad_best_onnx_{split}",
+        name=f"lipad_best_onnx_{data.stem}_{split}",
     )
 
     box = validation.box
     mask = validation.seg
-    result = {
+    result: dict[str, Any] = {
         "weights": str(weights.resolve()),
         "data": str(data.resolve()),
         "split": split,
@@ -85,10 +96,18 @@ def evaluate(weights: Path, data: Path, image_size: int, split: str) -> dict[str
     return result
 
 
+def safe_dataset_name(data: Path) -> str:
+    """Return a filesystem-safe name for per-dataset output files."""
+    return "".join(char if char.isalnum() or char in "-_" else "_" for char in data.stem)
+
+
 def write_outputs(result: dict[str, Any], output_dir: Path) -> None:
-    """Save machine-readable JSON and a compact CSV summary."""
+    """Save machine-readable JSON and CSV summaries for one dataset."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    dataset_name = safe_dataset_name(Path(result["data"]))
+    (output_dir / f"{dataset_name}_metrics.json").write_text(
+        json.dumps(result, indent=2), encoding="utf-8"
+    )
 
     rows = []
     for category in ("box", "mask"):
@@ -97,14 +116,47 @@ def write_outputs(result: dict[str, Any], output_dir: Path) -> None:
     for metric, value in result["speed_ms_per_image"].items():
         rows.append({"category": "speed_ms_per_image", "metric": metric, "value": value})
 
-    with (output_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as handle:
+    with (output_dir / f"{dataset_name}_metrics.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
         writer = csv.DictWriter(handle, fieldnames=["category", "metric", "value"])
         writer.writeheader()
         writer.writerows(rows)
 
 
+def write_combined_csv(results: list[dict[str, Any]], output_dir: Path) -> None:
+    """Save one comparison CSV containing both subset evaluations."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for result in results:
+        dataset = Path(result["data"]).stem
+        for category in ("box", "mask"):
+            for metric, value in result[category].items():
+                rows.append(
+                    {"dataset": dataset, "category": category, "metric": metric, "value": value}
+                )
+        for metric, value in result["speed_ms_per_image"].items():
+            rows.append(
+                {
+                    "dataset": dataset,
+                    "category": "speed_ms_per_image",
+                    "metric": metric,
+                    "value": value,
+                }
+            )
+
+    with (output_dir / "combined_metrics.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["dataset", "category", "metric", "value"]
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def print_report(result: dict[str, Any]) -> None:
-    """Print the metrics in a format suitable for copying into a report."""
+    """Print metrics in a format suitable for an academic report."""
     print("\n=== Project LiPAD exact ONNX evaluation ===")
     print(f"Weights: {result['weights']}")
     print(f"Dataset: {result['data']}")
@@ -121,21 +173,36 @@ def print_report(result: dict[str, Any]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--weights", type=Path, default=Path(DEFAULT_WEIGHTS))
-    parser.add_argument("--data", type=Path, required=True, help="Validation dataset YAML")
+    parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
+    parser.add_argument(
+        "--data",
+        type=Path,
+        nargs="+",
+        default=list(DEFAULT_DATASETS),
+        help="One or more validation dataset YAML files.",
+    )
     parser.add_argument("--split", default="val", choices=("train", "val", "test"))
     parser.add_argument("--imgsz", type=int, default=DEFAULT_IMAGE_SIZE)
-    parser.add_argument("--output-dir", type=Path, default=Path("runs/lipad_best_onnx_metrics"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("runs/lipad_best_onnx_metrics")
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    result = evaluate(args.weights, args.data, args.imgsz, args.split)
-    write_outputs(result, args.output_dir)
-    print_report(result)
-    print(f"\nSaved summary: {args.output_dir / 'metrics.csv'}")
-    print(f"Saved details: {args.output_dir / 'metrics.json'}")
+    results = []
+    for dataset in args.data:
+        result = evaluate(args.weights, dataset, args.imgsz, args.split)
+        results.append(result)
+        write_outputs(result, args.output_dir)
+        print_report(result)
+
+    write_combined_csv(results, args.output_dir)
+    combined_json = args.output_dir / "combined_metrics.json"
+    combined_json.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(f"\nSaved combined CSV: {args.output_dir / 'combined_metrics.csv'}")
+    print(f"Saved combined JSON: {combined_json}")
 
 
 if __name__ == "__main__":
