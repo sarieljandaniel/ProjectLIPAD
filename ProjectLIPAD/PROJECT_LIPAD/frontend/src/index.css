@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-radius: 0 !important;
+  }
+}
+
+@layer components {
+  .drop-cap::first-letter {
+    @apply float-left mr-2 font-serif text-5xl leading-none text-accent;
+  }
+}

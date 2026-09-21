@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
+  },
+  "extensions": {
+    "recommendations": ["ms-toolsai.jupyter", "ms-python.python"]
+  }
+}

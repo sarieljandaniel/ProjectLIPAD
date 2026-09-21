@@ -1,0 +1,5 @@
+Crack_ID,Original_YOLO_ID,Avg_Length_mm,Avg_Width_mm,Avg_Orientation_Deg,Avg_Area_mm2,Total_Frames_Tracked,Critical_Shear_Alert
+Crack#1,ID#1,279.17,0.5952,-31.3,153.42,26,1
+Crack#2,ID#2,462.37,1.4382,-23.7,629.72,135,0
+Crack#3,ID#5,33.53,1.5902,-47.5,49.5,24,1
+Crack#4,ID#6,367.48,0.5371,12.0,184.36,14,0

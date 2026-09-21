@@ -1,0 +1,29 @@
+# Large binaries, installers & model weights
+*.exe
+*.engine
+*.bin
+
+# Virtual environments & dependencies
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info
+
+# Datasets, runs & outputs
+datasets/
+wandb/
+corrosion_detection/dataset
+
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE & system metadata
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.env

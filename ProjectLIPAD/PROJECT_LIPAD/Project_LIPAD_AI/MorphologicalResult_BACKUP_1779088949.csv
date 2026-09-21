@@ -1,0 +1,5 @@
+Crack_ID,Avg_Length_mm,Avg_Width_mm,Avg_Orientation_Deg,Avg_Area_mm2,Total_Frames_Tracked,Critical_Shear_Alert
+Crack#1,104.18,0.4048,-46.5,43.18,31,1
+Crack#5,1033.23,62.3283,79.8,61189.43,18,1
+Crack#6,211.23,6.2626,78.1,1258.3,27,1
+Crack#7,186.18,9.4549,80.4,1767.0,26,1

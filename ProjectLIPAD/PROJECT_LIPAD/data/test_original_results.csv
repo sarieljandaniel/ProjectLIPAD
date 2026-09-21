@@ -1,0 +1,2 @@
+TimestampUTC,Video,Annotated_Video,Type,Severity,Crack_ID,Avg_Length_mm,Avg_Width_mm,Avg_Orientation_Deg,Avg_Area_mm2,Total_Frames_Tracked,Critical_Shear_Alert,GSD_mm_per_px
+2026-08-05T03:41:58+00:00,c:\Users\Admin\PROJECT_LIPAD\Corrosion\LIPAD_YOLO_TRAINING\crack_detection\own_data\videotest2.mp4,c:\Users\Admin\PROJECT_LIPAD\Corrosion\PROJECT_LIPAD\data\test_original_annotated.mp4,Crack,Moderate,Crack#1,1794.21,1.4906,-20.4,2969.5,42,0,0.5436
