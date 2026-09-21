@@ -1,8 +1,0 @@
-path: corrosion_detection/datasets
-train: images/train
-val: images/val
-nc: 3
-names:
-  0: fair
-  1: poor
-  2: severe
