@@ -1,8 +1,8 @@
 """Low-latency MJPEG camera viewer for the CustomTkinter desktop app.
 
-The viewer intentionally runs outside Tk's event loop. OpenCV decodes the HTTP
-multipart stream on a daemon thread and schedules only the latest frame onto the
-Tk main thread, so a stalled camera connection cannot freeze the application.
+OpenCV decodes the HTTP multipart stream on a daemon thread and schedules only
+UI updates on Tk's main thread, so a stalled camera connection cannot freeze the
+application.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ import customtkinter as ctk
 
 
 def _stop_mjpeg_viewer(app: Any) -> None:
-    """Stop the current capture and release OpenCV resources."""
     app._mjpeg_stop_event.set()
     capture = getattr(app, "_mjpeg_capture", None)
     if capture is not None:
@@ -50,30 +49,26 @@ def _publish_frame(app: Any, frame) -> None:
         app._mjpeg_imgtk = ctk_image
         label.configure(image=ctk_image, text="")
     except Exception:
-        # The window may be closing while a final decoded frame is queued.
         pass
 
 
 def start_mjpeg_viewer(app: Any) -> None:
-    """Start an HTTP MJPEG reader using the URL configured in the inspection page."""
     if getattr(app, "_mjpeg_running", False):
         stop_mjpeg_viewer(app)
         return
 
     url = (app.mjpeg_url.get() or "").strip()
     if not url:
-        app._set_status("Enter the Raspberry Pi MJPEG URL first.")
+        app._set_mjpeg_status("Enter the Raspberry Pi MJPEG URL first.")
         return
 
     _stop_mjpeg_viewer(app)
     app._mjpeg_stop_event = threading.Event()
     app._mjpeg_running = True
-    label = getattr(app, "mjpeg_preview_lbl", None)
-    if label is not None and label.winfo_exists():
-        label.configure(image=None, text="Connecting to camera feed…")
-    button = getattr(app, "mjpeg_toggle_btn", None)
-    if button is not None and button.winfo_exists():
-        button.configure(text="Stop camera feed")
+    if app.mjpeg_preview_lbl.winfo_exists():
+        app.mjpeg_preview_lbl.configure(image=None, text="Connecting to camera feed…")
+    app.mjpeg_toggle_btn.configure(text="Stop camera feed")
+    app.mjpeg_status_lbl.configure(text="Connecting…")
 
     def _reader() -> None:
         capture = cv2.VideoCapture(url)
@@ -84,7 +79,6 @@ def start_mjpeg_viewer(app: Any) -> None:
             app._mjpeg_running = False
             app.after(0, lambda: app._set_mjpeg_status("Unable to open MJPEG URL"))
             return
-
         try:
             while not app._mjpeg_stop_event.is_set():
                 ok, frame = capture.read()
@@ -102,21 +96,33 @@ def start_mjpeg_viewer(app: Any) -> None:
 
 
 def configure_mjpeg_controls(app: Any, parent: Any, tokens: Any, body_label, labeled_entry, newsprint_button) -> None:
-    """Add the direct HTTP MJPEG viewer controls to the inspection page."""
+    """Add MJPEG controls below the existing Inspection Manager grid.
+
+    The inspection page uses ``grid`` on its parent, so this section must also
+    use ``grid``. Mixing ``pack`` and ``grid`` on the same parent prevents the
+    controls from being created.
+    """
+    if getattr(app, "mjpeg_controls_frame", None) is not None:
+        try:
+            if app.mjpeg_controls_frame.winfo_exists():
+                return
+        except Exception:
+            pass
+
     if not hasattr(app, "mjpeg_url"):
-        app.mjpeg_url = ctk.StringVar(value="http://192.168.x.x:5000/video_feed")
-    app._mjpeg_stop_event = threading.Event()
-    app._mjpeg_capture = None
-    app._mjpeg_running = False
+        app.mjpeg_url = ctk.StringVar(value="http://192.168.1.50:5000/video_feed")
+    app._mjpeg_stop_event = getattr(app, "_mjpeg_stop_event", threading.Event())
+    app._mjpeg_capture = getattr(app, "_mjpeg_capture", None)
+    app._mjpeg_running = getattr(app, "_mjpeg_running", False)
     app._mjpeg_imgtk = None
 
     section = ctk.CTkFrame(parent, fg_color="transparent")
-    section.pack(fill="x", pady=(10, 0))
+    section.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+    app.mjpeg_controls_frame = section
     body_label(section, tokens, "Direct MJPEG camera feed", mono=True).pack(anchor="w")
     body_label(
-        section,
-        tokens,
-        "Use the Raspberry Pi HTTP /video_feed endpoint for display-only viewing. This does not replace live analysis.",
+        section, tokens,
+        "Enter the Raspberry Pi HTTP /video_feed endpoint for display-only viewing.",
         wraplength=620,
     ).pack(anchor="w", pady=(4, 8))
     url_row = ctk.CTkFrame(section, fg_color="transparent")
@@ -130,13 +136,8 @@ def configure_mjpeg_controls(app: Any, parent: Any, tokens: Any, body_label, lab
     app.mjpeg_status_lbl = body_label(section, tokens, "Camera feed stopped", mono=True)
     app.mjpeg_status_lbl.pack(anchor="w", pady=(0, 8))
     app.mjpeg_preview_lbl = ctk.CTkLabel(
-        section,
-        text="Camera feed stopped",
-        text_color=tokens.console_fg,
-        fg_color=tokens.console_bg,
-        anchor="center",
-        justify="center",
-        height=260,
+        section, text="Camera feed stopped", text_color=tokens.console_fg,
+        fg_color=tokens.console_bg, anchor="center", justify="center", height=260,
     )
     app.mjpeg_preview_lbl.pack(fill="x")
 
@@ -148,6 +149,9 @@ def set_mjpeg_status(app: Any, message: str) -> None:
     preview = getattr(app, "mjpeg_preview_lbl", None)
     if preview is not None and preview.winfo_exists() and not getattr(app, "_mjpeg_running", False):
         preview.configure(image=None, text=message)
+    button = getattr(app, "mjpeg_toggle_btn", None)
+    if button is not None and button.winfo_exists() and not getattr(app, "_mjpeg_running", False):
+        button.configure(text="Start camera feed")
 
 
 def install_status_callback(app: Any) -> None:
