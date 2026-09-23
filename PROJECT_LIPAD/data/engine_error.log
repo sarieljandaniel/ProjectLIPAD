@@ -7,12 +7,3 @@
 [SYSTEM] Quantized model loaded — device: cpu
   • C:\Users\lenovo\Project_LIPAD_v3\Corrosion\PROJECT_LIPAD\models\best.onnx
 [SYSTEM] High-Fidelity Processing Canvas Locked: 1280x720
-Traceback (most recent call last):
-  File "C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 1045, in <module>
-    main()
-  File "C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\Project_LIPAD_AI\lipad_runtime_engine_quantized.py", line 767, in main
-    success, current_frame = source.read(timeout=2.0)
-                             ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\lenovo\Project_LIPAD_V5\ProjectLIPAD\PROJECT_LIPAD\Project_LIPAD_AI\live_tcp_capture.py", line 309, in read
-    time.sleep(0.001)
-KeyboardInterrupt
