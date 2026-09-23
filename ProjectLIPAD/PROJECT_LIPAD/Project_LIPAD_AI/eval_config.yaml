@@ -1,0 +1,8 @@
+# eval_config.yaml — path is relative to this file.
+path: ../../LIPAD_YOLO_TRAINING/crack_detection/datasets
+# Both train and val keys are strictly required by Ultralytics parser
+train: images/train  # or 'train/images'
+val: images/val      # or 'val/images'
+
+names:
+  0: crack

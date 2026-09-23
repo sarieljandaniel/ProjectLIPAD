@@ -1,6 +1,0 @@
-﻿names:
-  0: crack
-
-path: C:/Users/lenovo/Project_LIPAD_V5/ProjectLIPAD/LIPAD_YOLO_TRAINING/crack_detection/datasets
-train: subset_m/images/train
-val: subset_m/images/val

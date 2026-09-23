@@ -1,0 +1,5 @@
+names:
+  0: crack
+path: datasets
+train: subset_s/images/train
+val: subset_s/images/val

@@ -1,5 +1,0 @@
-names:
-  0: crack
-path: C:\Users\ADMIN\PROJECT_LIPAD_ANALYSIS\Corrosion\LIPAD_YOLO_TRAINING\crack_detection\datasets\datasets
-train: subset_x/images/train
-val: images/val

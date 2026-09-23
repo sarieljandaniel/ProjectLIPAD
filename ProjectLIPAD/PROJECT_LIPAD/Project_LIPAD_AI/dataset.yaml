@@ -1,0 +1,7 @@
+# Dataset root is relative to this YAML file so it works on any machine.
+path: datasets
+train: images/train
+val: images/val
+
+names:
+  0: crack
